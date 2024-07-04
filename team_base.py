@@ -1,133 +1,190 @@
-class TeamBase:
-    """
-    Base interface implementation for API's to manage teams.
-    For simplicity a single team manages a single project. And there is a separate team per project.
-    Users can be
-    """
+import json
+import os
+import uuid
+from datetime import datetime
 
-    # create a team
-    def create_team(self, request: str) -> str:
-        """
-        :param request: A json string with the team details
-        {
-          "name" : "<team_name>",
-          "description" : "<some description>",
-          "admin": "<id of a user>"
+from project_board_base import ProjectBoardBase
+
+BOARD_DB_PATH = 'db/boards.json'
+TASK_DB_PATH = 'db/tasks.json'
+TEAM_DB_PATH = 'db/teams.json'
+
+class ProjectBoard(ProjectBoardBase):
+    def _init_(self):
+        if not os.path.exists(BOARD_DB_PATH):
+            os.makedirs(os.path.dirname(BOARD_DB_PATH), exist_ok=True)
+            with open(BOARD_DB_PATH, 'w') as db_file:
+                json.dump({}, db_file)
+        if not os.path.exists(TASK_DB_PATH):
+            os.makedirs(os.path.dirname(TASK_DB_PATH), exist_ok=True)
+            with open(TASK_DB_PATH, 'w') as db_file:
+                json.dump({}, db_file)
+        if not os.path.exists(TEAM_DB_PATH):
+            os.makedirs(os.path.dirname(TEAM_DB_PATH), exist_ok=True)
+            with open(TEAM_DB_PATH, 'w') as db_file:
+                json.dump({}, db_file)
+        self.load_boards()
+        self.load_tasks()
+        self.load_teams()
+
+    def load_boards(self):
+        with open(BOARD_DB_PATH, 'r') as db_file:
+            self.boards = json.load(db_file)
+
+    def save_boards(self):
+        with open(BOARD_DB_PATH, 'w') as db_file:
+            json.dump(self.boards, db_file, indent=4)
+
+    def load_tasks(self):
+        with open(TASK_DB_PATH, 'r') as db_file:
+            self.tasks = json.load(db_file)
+
+    def save_tasks(self):
+        with open(TASK_DB_PATH, 'w') as db_file:
+            json.dump(self.tasks, db_file, indent=4)
+
+    def load_teams(self):
+        with open(TEAM_DB_PATH, 'r') as db_file:
+            self.teams = json.load(db_file)
+
+    def create_board(self, request: str) -> str:
+        data = json.loads(request)
+        board_id = str(uuid.uuid4())
+        name = data['name']
+        description = data['description']
+        team_id = data['team_id']
+        creation_time = data['creation_time']
+
+        if len(name) > 64 or len(description) > 128:
+            raise ValueError("Board name or description exceeds maximum length")
+
+        if team_id not in self.teams:
+            raise ValueError("Team does not exist")
+
+        if name in [board['name'] for board in self.boards.values() if board['team_id'] == team_id]:
+            raise ValueError("Board name must be unique for the team")
+
+        board = {
+            "name": name,
+            "description": description,
+            "team_id": team_id,
+            "creation_time": creation_time,
+            "status": "OPEN"
         }
-        :return: A json string with the response {"id" : "<team_id>"}
 
-        Constraint:
-            * Team name must be unique
-            * Name can be max 64 characters
-            * Description can be max 128 characters
-        """
-        pass
+        self.boards[board_id] = board
+        self.save_boards()
 
-    # list all teams
-    def list_teams(self) -> str:
-        """
-        :return: A json list with the response.
-        [
-          {
-            "name" : "<team_name>",
-            "description" : "<some description>",
-            "creation_time" : "<some date:time format>",
-            "admin": "<id of a user>"
-          }
+        return json.dumps({"id": board_id})
+
+    def close_board(self, request: str) -> str:
+        data = json.loads(request)
+        board_id = data['id']
+
+        if board_id not in self.boards:
+            raise ValueError("Board not found")
+
+        board = self.boards[board_id]
+
+        if board['status'] != "OPEN":
+            raise ValueError("Only open boards can be closed")
+
+        board_tasks = [task for task in self.tasks.values() if task['board_id'] == board_id]
+        if any(task['status'] != "COMPLETE" for task in board_tasks):
+            raise ValueError("All tasks must be complete to close the board")
+
+        board['status'] = "CLOSED"
+        board['end_time'] = datetime.now().isoformat()
+        self.save_boards()
+
+        return json.dumps({"status": "success"})
+
+    def add_task(self, request: str) -> str:
+        data = json.loads(request)
+        task_id = str(uuid.uuid4())
+        title = data['title']
+        description = data['description']
+        user_id = data['user_id']
+        creation_time = data['creation_time']
+        board_id = data['board_id']
+
+        if len(title) > 64 or len(description) > 128:
+            raise ValueError("Task title or description exceeds maximum length")
+
+        if board_id not in self.boards:
+            raise ValueError("Board does not exist")
+
+        board = self.boards[board_id]
+
+        if board['status'] != "OPEN":
+            raise ValueError("Tasks can only be added to open boards")
+
+        if title in [task['title'] for task in self.tasks.values() if task['board_id'] == board_id]:
+            raise ValueError("Task title must be unique for the board")
+
+        task = {
+            "title": title,
+            "description": description,
+            "user_id": user_id,
+            "creation_time": creation_time,
+            "board_id": board_id,
+            "status": "OPEN"
+        }
+
+        self.tasks[task_id] = task
+        self.save_tasks()
+
+        return json.dumps({"id": task_id})
+
+    def update_task_status(self, request: str):
+        data = json.loads(request)
+        task_id = data['id']
+        status = data['status']
+
+        if status not in ["OPEN", "IN_PROGRESS", "COMPLETE"]:
+            raise ValueError("Invalid status")
+
+        if task_id not in self.tasks:
+            raise ValueError("Task not found")
+
+        task = self.tasks[task_id]
+        task['status'] = status
+        self.save_tasks()
+
+        return json.dumps({"status": "success"})
+
+    def list_boards(self, request: str) -> str:
+        data = json.loads(request)
+        team_id = data['id']
+
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
+
+        open_boards = [
+            {"id": board_id, "name": board['name']}
+            for board_id, board in self.boards.items()
+            if board['team_id'] == team_id and board['status'] == "OPEN"
         ]
-        """
-        pass
 
-    # describe team
-    def describe_team(self, request: str) -> str:
-        """
-        :param request: A json string with the team details
-        {
-          "id" : "<team_id>"
-        }
+        return json.dumps(open_boards, indent=4)
 
-        :return: A json string with the response
+    def export_board(self, request: str) -> str:
+        data = json.loads(request)
+        board_id = data['id']
 
-        {
-          "name" : "<team_name>",
-          "description" : "<some description>",
-          "creation_time" : "<some date:time format>",
-          "admin": "<id of a user>"
-        }
+        if board_id not in self.boards:
+            raise ValueError("Board not found")
 
-        """
-        pass
+        board = self.boards[board_id]
+        tasks = [task for task in self.tasks.values() if task['board_id'] == board_id]
 
-    # update team
-    def update_team(self, request: str) -> str:
-        """
-        :param request: A json string with the team details
-        {
-          "id" : "<team_id>",
-          "team" : {
-            "name" : "<team_name>",
-            "description" : "<team_description>",
-            "admin": "<id of a user>"
-          }
-        }
+        output = f"Board: {board['name']}\nDescription: {board['description']}\nCreation Time: {board['creation_time']}\nStatus: {board['status']}\n\nTasks:\n"
+        for task in tasks:
+            output += f"Task: {task['title']}\nDescription: {task['description']}\nAssigned to: {task['user_id']}\nStatus: {task['status']}\nCreation Time: {task['creation_time']}\n\n"
 
-        :return:
+        output_file = f"out/board_{board_id}.txt"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        with open(output_file, 'w') as f:
+            f.write(output)
 
-        Constraint:
-            * Team name must be unique
-            * Name can be max 64 characters
-            * Description can be max 128 characters
-        """
-        pass
-
-    # add users to team
-    def add_users_to_team(self, request: str):
-        """
-        :param request: A json string with the team details
-        {
-          "id" : "<team_id>",
-          "users" : ["user_id 1", "user_id2"]
-        }
-
-        :return:
-
-        Constraint:
-        * Cap the max users that can be added to 50
-        """
-        pass
-
-    # add users to team
-    def remove_users_from_team(self, request: str):
-        """
-        :param request: A json string with the team details
-        {
-          "id" : "<team_id>",
-          "users" : ["user_id 1", "user_id2"]
-        }
-
-        :return:
-
-        Constraint:
-        * Cap the max users that can be added to 50
-        """
-        pass
-
-    # list users of a team
-    def list_team_users(self, request: str):
-        """
-        :param request: A json string with the team identifier
-        {
-          "id" : "<team_id>"
-        }
-
-        :return:
-        [
-          {
-            "id" : "<user_id>",
-            "name" : "<user_name>",
-            "display_name" : "<display name>"
-          }
-        ]
-        """
-        pass
-
+        return json.dumps({"out_file": output_file})
