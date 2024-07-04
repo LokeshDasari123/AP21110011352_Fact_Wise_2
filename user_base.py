@@ -1,94 +1,135 @@
-class UserBase:
-    """
-    Base interface implementation for API's to manage users.
-    """
+import json
+import os
+import uuid
+from datetime import datetime
+from typing import List, Dict
 
-    # create a user
-    def create_user(self, request: str) -> str:
-        """
-        :param request: A json string with the user details
-        {
-          "name" : "<user_name>",
-          "display_name" : "<display name>"
-        }
-        :return: A json string with the response {"id" : "<user_id>"}
+from team_base import TeamBase
 
-        Constraint:
-            * user name must be unique
-            * name can be max 64 characters
-            * display name can be max 64 characters
-        """
-        pass
+DB_PATH = 'db/teams.json'
 
-    # list all users
-    def list_users(self) -> str:
-        """
-        :return: A json list with the response
-        [
-          {
-            "name" : "<user_name>",
-            "display_name" : "<display name>",
-            "creation_time" : "<some date:time format>"
-          }
-        ]
-        """
-        pass
+class Team(TeamBase):
+    def _init_(self):
+        if not os.path.exists(DB_PATH):
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+            with open(DB_PATH, 'w') as db_file:
+                json.dump({}, db_file)
+        self.load_teams()
 
-    # describe user
-    def describe_user(self, request: str) -> str:
-        """
-        :param request: A json string with the user details
-        {
-          "id" : "<user_id>"
-        }
+    def load_teams(self):
+        with open(DB_PATH, 'r') as db_file:
+            self.teams = json.load(db_file)
 
-        :return: A json string with the response
+    def save_teams(self):
+        with open(DB_PATH, 'w') as db_file:
+            json.dump(self.teams, db_file, indent=4)
 
-        {
-          "name" : "<user_name>",
-          "description" : "<some description>",
-          "creation_time" : "<some date:time format>"
+    def create_team(self, request: str) -> str:
+        data = json.loads(request)
+        team_id = str(uuid.uuid4())
+        name = data['name']
+        description = data['description']
+        admin = data['admin']
+
+        if len(name) > 64 or len(description) > 128:
+            raise ValueError("Team name or description exceeds maximum length")
+
+        if name in [team['name'] for team in self.teams.values()]:
+            raise ValueError("Team name must be unique")
+
+        team = {
+            "name": name,
+            "description": description,
+            "creation_time": datetime.now().isoformat(),
+            "admin": admin,
+            "users": [admin]
         }
 
-        """
-        pass
+        self.teams[team_id] = team
+        self.save_teams()
 
-    # update user
-    def update_user(self, request: str) -> str:
-        """
-        :param request: A json string with the user details
-        {
-          "id" : "<user_id>",
-          "user" : {
-            "name" : "<user_name>",
-            "display_name" : "<display name>"
-          }
-        }
+        return json.dumps({"id": team_id})
 
-        :return:
+    def list_teams(self) -> str:
+        return json.dumps(list(self.teams.values()), indent=4)
 
-        Constraint:
-            * user name cannot be updated
-            * name can be max 64 characters
-            * display name can be max 128 characters
-        """
-        pass
+    def describe_team(self, request: str) -> str:
+        data = json.loads(request)
+        team_id = data['id']
 
-    def get_user_teams(self, request: str) -> str:
-        """
-        :param request:
-        {
-          "id" : "<user_id>"
-        }
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
 
-        :return: A json list with the response.
-        [
-          {
-            "name" : "<team_name>",
-            "description" : "<some description>",
-            "creation_time" : "<some date:time format>"
-          }
-        ]
-        """
-        pass
+        return json.dumps(self.teams[team_id], indent=4)
 
+    def update_team(self, request: str) -> str:
+        data = json.loads(request)
+        team_id = data['id']
+        team_details = data['team']
+        name = team_details['name']
+        description = team_details['description']
+        admin = team_details['admin']
+
+        if len(name) > 64 or len(description) > 128:
+            raise ValueError("Team name or description exceeds maximum length")
+
+        if name in [team['name'] for team in self.teams.values() if team != self.teams[team_id]]:
+            raise ValueError("Team name must be unique")
+
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
+
+        team = self.teams[team_id]
+        team.update({
+            "name": name,
+            "description": description,
+            "admin": admin
+        })
+        self.save_teams()
+
+        return json.dumps({"status": "success"})
+
+    def add_users_to_team(self, request: str):
+        data = json.loads(request)
+        team_id = data['id']
+        users = data['users']
+
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
+
+        team = self.teams[team_id]
+        if len(team['users']) + len(users) > 50:
+            raise ValueError("Cannot add more than 50 users to a team")
+
+        team['users'].extend(users)
+        self.save_teams()
+
+        return json.dumps({"status": "success"})
+
+    def remove_users_from_team(self, request: str):
+        data = json.loads(request)
+        team_id = data['id']
+        users = data['users']
+
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
+
+        team = self.teams[team_id]
+        team['users'] = [user for user in team['users'] if user not in users]
+        self.save_teams()
+
+        return json.dumps({"status": "success"})
+
+    def list_team_users(self, request: str):
+        data = json.loads(request)
+        team_id = data['id']
+
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
+
+        team = self.teams[team_id]
+        users = team['users']
+
+        user_details = [{"id": user, "name": f"User {user}", "display_name": f"User {user}"} for user in users]
+
+        return json.dumps(user_details, indent=4)
