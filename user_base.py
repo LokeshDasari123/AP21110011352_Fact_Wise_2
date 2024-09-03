@@ -9,16 +9,19 @@ from team_base import TeamBase
 DB_PATH = 'db/teams.json'
 
 class Team(TeamBase):
-    def _init_(self):
+    def __init__(self):
         if not os.path.exists(DB_PATH):
             os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
             with open(DB_PATH, 'w') as db_file:
-                json.dump({}, db_file)
+                json.dump({}, db_file)  
         self.load_teams()
 
     def load_teams(self):
-        with open(DB_PATH, 'r') as db_file:
-            self.teams = json.load(db_file)
+        try:
+            with open(DB_PATH, 'r') as db_file:
+                self.teams = json.load(db_file)
+        except json.JSONDecodeError:
+            self.teams = {}  
 
     def save_teams(self):
         with open(DB_PATH, 'w') as db_file:
@@ -70,14 +73,15 @@ class Team(TeamBase):
         description = team_details['description']
         admin = team_details['admin']
 
+        if team_id not in self.teams:
+            raise ValueError("Team not found")
+
         if len(name) > 64 or len(description) > 128:
             raise ValueError("Team name or description exceeds maximum length")
 
-        if name in [team['name'] for team in self.teams.values() if team != self.teams[team_id]]:
+        
+        if name in [team['name'] for team_id_check, team in self.teams.items() if team_id_check != team_id]:
             raise ValueError("Team name must be unique")
-
-        if team_id not in self.teams:
-            raise ValueError("Team not found")
 
         team = self.teams[team_id]
         team.update({
@@ -120,7 +124,7 @@ class Team(TeamBase):
 
         return json.dumps({"status": "success"})
 
-    def list_team_users(self, request: str):
+        def list_team_users(self, request: str):
         data = json.loads(request)
         team_id = data['id']
 
@@ -130,6 +134,7 @@ class Team(TeamBase):
         team = self.teams[team_id]
         users = team['users']
 
+        
         user_details = [{"id": user, "name": f"User {user}", "display_name": f"User {user}"} for user in users]
 
         return json.dumps(user_details, indent=4)
